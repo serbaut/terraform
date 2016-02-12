@@ -30,6 +30,18 @@ func resourceCloudStackSSHKeyPair() *schema.Resource {
 				ForceNew: true,
 			},
 
+			"public_key_openssh": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
+
+			"project": &schema.Schema{
+				Type:     schema.TypeString,
+				Optional: true,
+				ForceNew: true,
+			},
+
 			"private_key": &schema.Schema{
 				Type:     schema.TypeString,
 				Computed: true,
@@ -43,11 +55,28 @@ func resourceCloudStackSSHKeyPair() *schema.Resource {
 	}
 }
 
+type SSHParams interface {
+	SetProjectid(string)
+}
+
+// If there is a project supplied, we retrieve and set the project id
+func setProjectid(p SSHParams, cs *cloudstack.CloudStackClient, d *schema.ResourceData) error {
+	if project, ok := d.GetOk("project"); ok {
+		projectid, e := retrieveID(cs, "project", project.(string))
+		if e != nil {
+			return e.Error()
+		}
+		p.SetProjectid(projectid)
+	}
+	return nil
+}
+
 func resourceCloudStackSSHKeyPairCreate(d *schema.ResourceData, meta interface{}) error {
 	cs := meta.(*cloudstack.CloudStackClient)
 
 	name := d.Get("name").(string)
 	publicKey := d.Get("public_key").(string)
+	publicKeyOpenssh := d.Get("public_key_openssh").(string)
 
 	if publicKey != "" {
 		// Register supplied key
@@ -62,13 +91,27 @@ func resourceCloudStackSSHKeyPairCreate(d *schema.ResourceData, meta interface{}
 		}
 
 		p := cs.SSH.NewRegisterSSHKeyPairParams(name, string(key))
+		if err := setProjectid(p, cs, d); err != nil {
+			return err
+		}
 		_, err = cs.SSH.RegisterSSHKeyPair(p)
 		if err != nil {
+			return err
+		}
+	} else if publicKeyOpenssh != "" {
+		p := cs.SSH.NewRegisterSSHKeyPairParams(name, publicKeyOpenssh)
+		if err := setProjectid(p, cs, d); err != nil {
+			return err
+		}
+		if _, err := cs.SSH.RegisterSSHKeyPair(p); err != nil {
 			return err
 		}
 	} else {
 		// No key supplied, must create one and return the private key
 		p := cs.SSH.NewCreateSSHKeyPairParams(name)
+		if err := setProjectid(p, cs, d); err != nil {
+			return err
+		}
 		r, err := cs.SSH.CreateSSHKeyPair(p)
 		if err != nil {
 			return err
@@ -89,6 +132,9 @@ func resourceCloudStackSSHKeyPairRead(d *schema.ResourceData, meta interface{}) 
 
 	p := cs.SSH.NewListSSHKeyPairsParams()
 	p.SetName(d.Id())
+	if err := setProjectid(p, cs, d); err != nil {
+		return err
+	}
 
 	r, err := cs.SSH.ListSSHKeyPairs(p)
 	if err != nil {
@@ -112,6 +158,9 @@ func resourceCloudStackSSHKeyPairDelete(d *schema.ResourceData, meta interface{}
 
 	// Create a new parameter struct
 	p := cs.SSH.NewDeleteSSHKeyPairParams(d.Id())
+	if err := setProjectid(p, cs, d); err != nil {
+		return err
+	}
 
 	// Remove the SSH Keypair
 	_, err := cs.SSH.DeleteSSHKeyPair(p)
